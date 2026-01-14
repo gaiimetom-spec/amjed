@@ -1,45 +1,119 @@
 <?php
-// ====== إعدادات البوت ======
 $token = "8453831306:AAEcF34R9Ive00hywzVoxlTWcJmqHfxahQs";
-$admin_id = 6568145373; // ضع ايدي حسابك في تيليجرام
+$owner_id = 6568145373; // ايديك
+$channel1 = "@YourChannel1";
+$channel2 = "@YourChannel2";
+$group1 = "@YourGroup";
+
 $api = "https://api.telegram.org/bot$token/";
 
-// ملفات الحالة
-$bot_status_file = "bot_status.txt";
-$ban_file = "banned.txt";
-$users_file = "users.json";
-
-if (!file_exists($bot_status_file)) file_put_contents($bot_status_file, "on");
-if (!file_exists($ban_file)) file_put_contents($ban_file, "");
-if (!file_exists($users_file)) file_put_contents($users_file, json_encode([]));
-
 $update = json_decode(file_get_contents("php://input"), true);
-if (!$update) exit;
-
 $chat_id = $update['message']['chat']['id'] ?? $update['callback_query']['message']['chat']['id'] ?? null;
 $user_id = $update['message']['from']['id'] ?? $update['callback_query']['from']['id'] ?? null;
-$text = trim($update['message']['text'] ?? '');
-$callback_data = $update['callback_query']['data'] ?? '';
-$name = $update['message']['from']['first_name'] ?? $update['callback_query']['from']['first_name'] ?? '';
+$text = $update['message']['text'] ?? '';
+$cb = $update['callback_query']['data'] ?? null;
 
-// ===== دوال =====
-function send($id, $msg, $buttons = null){
+// إنشاء مجلد البيانات
+@mkdir("data");
+@mkdir("data/uploads");
+
+// ملفات البوت
+$status_file = "data/status.txt";
+$users_file = "data/users.json";
+$banned_file = "data/banned.txt";
+
+if(!file_exists($status_file)) file_put_contents($status_file,"on");
+if(!file_exists($users_file)) file_put_contents($users_file,json_encode([]));
+if(!file_exists($banned_file)) file_put_contents($banned_file,"");
+
+$status = trim(file_get_contents($status_file));
+$users = json_decode(file_get_contents($users_file), true);
+$banned = file($banned_file, FILE_IGNORE_NEW_LINES);
+
+// دالة إرسال
+function send($chat_id,$text,$buttons=null){
     global $api;
-    $data = [
-        'chat_id' => $id,
-        'text' => $msg,
-        'parse_mode' => 'HTML'
-    ];
-    if($buttons){
-        $data['reply_markup'] = json_encode(['inline_keyboard'=>$buttons]);
-    }
-    $ch = curl_init($GLOBALS['api']."sendMessage");
-    curl_setopt($ch, CURLOPT_POST, 1);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $data);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_exec($ch);
-    curl_close($ch);
+    $data = ['chat_id'=>$chat_id,'text'=>$text,'parse_mode'=>'HTML'];
+    if($buttons) $data['reply_markup'] = json_encode($buttons);
+    file_get_contents($api."sendMessage?".http_build_query($data));
 }
+
+// تحقق الحظر
+if(in_array($user_id,$banned)) exit;
+
+// تحقق تشغيل البوت
+if($status=="off" && $user_id != $owner_id) exit;
+
+// تسجيل مستخدم جديد
+if(!isset($users[$user_id])){
+    $users[$user_id] = ['subscribed'=>false];
+    file_put_contents($users_file,json_encode($users));
+    send($owner_id,"🔔 مستخدم جديد دخل البوت\n🆔 $user_id");
+}
+
+// /start
+if($text=="/start"){
+    $msg = "✨ أهلاً بك في بوت 𝑨𝒎𝒋𝒆𝒅 𝑨𝒍𝒌𝒘𝒓𝒚 ✨
+🤖 بوت PHP عربي لإدارة ورفع الملفات!
+💡 يجب الاشتراك أولاً في القنوات والمجموعة:";
+
+    $buttons = [
+        'inline_keyboard'=>[
+            [['text'=>'🔗 القناة 1','url'=>$channel1]],
+            [['text'=>'🔗 القناة 2','url'=>$channel2]],
+            [['text'=>'🔗 المجموعة','url'=>$group1]],
+            [['text'=>'✅ تحقق','callback_data'=>'check_sub']]
+        ]
+    ];
+    send($chat_id,$msg,$buttons);
+    exit;
+}
+
+// التحقق عند الضغط
+if($cb=="check_sub"){
+    $users[$user_id]['subscribed'] = true;
+    file_put_contents($users_file,json_encode($users));
+    send($chat_id,"✅ تم التحقق من الاشتراك! يمكنك الآن استخدام البوت.");
+
+    // عرض لوحة المستخدم
+    send($chat_id,"اختر ما تريد:",[
+        'inline_keyboard'=>[
+            [['text'=>'📂 رفع ملف PHP','callback_data'=>'upload']],
+            [['text'=>'📁 عرض الملفات المرفوعة','callback_data'=>'list_files']]
+        ]
+    ]);
+    exit;
+}
+
+// رفع الملفات
+if(isset($update['message']['document']) && $users[$user_id]['subscribed']){
+    $file_id = $update['message']['document']['file_id'];
+    $file_name = $update['message']['document']['file_name'];
+    $file_info = file_get_contents($api."getFile?file_id=$file_id");
+    $file_info = json_decode($file_info,true);
+    $file_path = $file_info['result']['file_path'];
+    $content = file_get_contents("https://api.telegram.org/file/bot$token/$file_path");
+    file_put_contents("data/uploads/".$file_name,$content);
+    send($chat_id,"✅ تم رفع الملف بنجاح: $file_name");
+    exit;
+}
+
+// لوحة الأدمن
+if($user_id==$owner_id && $text=="/admin"){
+    send($chat_id,"👑 لوحة تحكم الأدمن",[
+        'inline_keyboard'=>[
+            [['text'=>'🟢 تشغيل','callback_data'=>'on'],['text'=>'🔴 إيقاف','callback_data'=>'off']],
+            [['text'=>'👥 عدد المستخدمين','callback_data'=>'count'],['text'=>'📋 قائمة المحظورين','callback_data'=>'banned']],
+            [['text'=>'⛔ حظر مستخدم','callback_data'=>'ban'],['text'=>'✅ فك الحظر','callback_data'=>'unban']]
+        ]
+    ]);
+}
+
+// باقي عمليات الأدمن (تشغيل/إيقاف/حظر/فك)
+if($cb=="on" && $user_id==$owner_id){ file_put_contents($status_file,"on"); send($chat_id,"✅ تم تشغيل البوت"); exit; }
+if($cb=="off" && $user_id==$owner_id){ file_put_contents($status_file,"off"); send($chat_id,"✅ تم إيقاف البوت"); exit; }
+if($cb=="count" && $user_id==$owner_id){ send($chat_id,"👥 عدد المستخدمين: ".count($users)); exit; }
+if($cb=="banned" && $user_id==$owner_id){ $banned_list = implode("\n",$banned); send($chat_id,"📋 المحظورين:\n$banned_list"); exit; }}
 
 // ===== التحقق من حالة البوت =====
 $bot_status = trim(file_get_contents($bot_status_file));
@@ -122,3 +196,4 @@ if(isset($users[$user_id]['step'])){
     send($chat_id,"✅ تم تعيين $step بنجاح");
 }
 ?>?>
+
